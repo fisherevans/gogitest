@@ -14,7 +14,7 @@ Clone this repo, then add the `./bin` folder to your `$PATH`:
 
 ```bash
 cd ~/git
-git@github.com:fisherevans/gogitest.git
+git clone git@github.com:fisherevans/gogitest.git
 export PATH="$PATH:$HOME/git/gogitest/bin"
 ```
 
