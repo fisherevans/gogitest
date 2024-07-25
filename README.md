@@ -4,7 +4,7 @@
 
 ***This tool tries to solve one problem: make it easier to test local go changes without having to "test the world".***
 
-In large projects with many dependencies, changing a single file can result in many compilation and test failures in other local dependent packages. `gogitest` detects your changes with git, looks for packages that may depend on those changes, and tests them all for you. No more hunting down dependencies manually, stop playing games of ping pong against your CI test suite, don't wait for 30 minutes while the full test suite runs locally and then still fails due to unrelated environment issues.
+In large projects with many dependencies, changing a single file can result in many compilation and test failures in other local dependent packages. `gogitest` detects your changes with git, looks for packages that may depend on those changes, and tests them all for you. No more hunting down dependencies manually, games of ping pong against your CI test suite, or waiting for 30 minutes while the full test suite runs locally (which still fails due to unrelated environment issues).
 
 Just run `gogitest`.
 
