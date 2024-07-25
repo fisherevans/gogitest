@@ -1,0 +1,322 @@
+#!/usr/bin/env bash
+
+if [ "$_DEBUG" != "" ] ; then set -x ; fi
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> PRINTING FUNCTIONS
+
+quiet="$GOGI_QUIET"
+info () {
+    if [ "$quiet" != "true" ] ; then
+        >&2 echo "$@"
+    fi
+}
+info_kv() {
+    info "$(printf "%.60s %s" "$1 ..........................................................................................." "$2")"
+}
+info_bar() {
+    line=""
+    for i in $(seq 1 $2) ; do line="$line$1" ; done
+    info $line
+}
+
+fatal() {
+    >&2 echo "[error] $1"
+    exit
+}
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> CHECK PRE-REQS
+
+git -h > /dev/null 2> /dev/null
+if [ $? -ne 0 ] ; then
+    fatal "Missing dependency 'git'"
+fi
+
+go help env > /dev/null 2> /dev/null
+if [ $? -ne 0 ] ; then
+    fatal "Missing dependency 'go'"
+fi
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> CONFIRM WE'RE IN A VALID PROJECT
+
+goenv=`go env`
+if [ $? -ne 0 ] ; then
+    fatal "Command not run within in a valid go module!"
+fi
+eval `echo "$goenv"`
+
+git status > /dev/null 2> /dev/null
+if [ $? -ne 0 ] ; then
+  fatal "Command not run within a git repository!"
+fi
+
+if [ "$GOMOD" == "" ] ; then
+    fatal "Unable to find a valid go.mod!"
+fi
+gomod=`cat $GOMOD`
+if [ "$gomod" == "" ] ; then
+    fatal "Unable to access '$GOMOD'!"
+fi
+module=`echo "$gomod" | grep "^module " | head -n1 | cut -d' ' -f2`
+if [ "$gomod" == "" ] ; then
+    fatal "Unable to parse go module from '$GOMOD'!"
+fi
+
+gitRoot=`git rev-parse --show-toplevel`
+if [ $? -ne 0 ] ; then
+  fatal "Not in a git repository (`pwd`)!"
+fi
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> PARSE ARGUMENTS
+
+declare -A ignoreFilterPatterns
+declare -A matchFilterPatterns
+base=""
+local=""
+build=""
+clean=""
+ancestors=1
+mode=""
+while(($#)) ; do
+    arg=$1
+    shift
+    case $arg in
+        --)
+            break;;
+        # argument modes
+        -match|-m)
+            mode="match";;
+        -ignore|-i)
+            mode="ignore";;
+        -base|-b)
+            mode="base";;
+        -ancestors|-a)
+            mode="ancestors";;
+        # toggles
+        -local|-l)
+            local="true"
+            mode="";;
+        -nodeps)
+            ancestors=0
+            mode="";;
+        -build)
+            build="true"
+            mode="";;
+        -clean|-c)
+            clean="true"
+            mode="";;
+        -quiet|-q)
+            quiet="true"
+            mode="";;
+        # help
+        -help|-h)
+            cat $(dirname -- "${BASH_SOURCE[0]}")/gogitest_help.txt
+            exit 0;;
+        *)
+            # mode argument handling
+            case $mode in
+                match)
+                    matchFilterPatterns[$arg]=;;
+                ignore)
+                    ignoreFilterPatterns[$arg]=;;
+                base)
+                    if [ "$base" != "" ] ; then
+                        fatal "You can only specify one base"
+                    fi
+                    base="$arg";;
+                ancestors)
+                    if ! [[ $arg =~ ^[1-9][0-9]*$ ]] ; then
+                        fatal "Supplied ancestors argument '$arg' is not an integer > 0"
+                    fi
+                    ancestors=$arg;;
+                *)
+                    modeArg=""
+                    if [ "$mode" ] ; then modeArg="--$mode " ; fi
+                    fatal "Invalid argument '$modeArg$arg'. Try -help"
+            esac;;
+    esac
+done
+
+isPackageFiltered () {
+    pkg="$1"
+    for ignoreFilterPattern in "${!ignoreFilterPatterns[@]}"; do
+        if [[ "$pkg" =~ $ignoreFilterPattern ]] ; then
+            return 0
+        fi
+    done
+    for matchFilterPattern in "${!matchFilterPatterns[@]}"; do
+        if ! [[ "$pkg" =~ $matchFilterPattern ]] ; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> VALIDATE PROJECT AND GET DIFFS
+
+
+gomoddir=$(dirname gomod)
+cd $gomoddir
+info_kv "Git project root" "$gitRoot"
+info_kv "Go module root (working directory)" $(pwd)
+info_kv "Go module name" "$module"
+
+baseHint=""
+if [ "$base" == "" ] ; then
+    if [ "$local" ] ; then # get the current branch
+        base=`git rev-parse --abbrev-ref HEAD`
+        baseHint=" (autodetected local base)"
+    else # get the main dev branch
+        base=`git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@'`
+        baseHint=" (autodetected remote base)"
+    fi
+fi
+info_kv "Git base branch$baseHint" "$base"
+compareAgainst="origin/$base" # if $local, comparse against the base branch, in origin\
+compareAgainstContext=""
+if [ "$local" == "" ] ; then # otherwise, by default, comparse against the merge base commit to $base
+    compareAgainst=`git merge-base HEAD $base`
+    compareAgainstContext=" (merge base of '$base')"
+fi
+info_kv "Git diff target$compareAgainstContext" "$compareAgainst"
+modifiedDirectories=`git diff --name-only "$compareAgainst" --relative -- $(pwd) | grep '.go$' | xargs dirname | sort | uniq | sed '/^$/d'`
+
+info_bar "-" 80
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> FILTER OUT MODIFIED PACKAGES
+
+declare -A impactedPackages
+filteredPackageCount=0
+for modifiedDirectory in $modifiedDirectories ; do
+    if ! [ -d $modifiedDirectory ] ; then
+        info "Ignoring changes in non-existent directory: $modifiedDirectory"
+        continue
+    fi
+    modifiedPackage="$module/$modifiedDirectory"
+    if isPackageFiltered $modifiedPackage ; then
+        filteredPackageCount=$((filteredPackageCount+1))
+        continue
+    fi
+    impactedPackages[$modifiedPackage]=
+done
+
+if [ "$filteredPackageCount" != "0" ] ; then
+    info "Filters omitted $filteredPackageCount modified packages"
+fi
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> PRINT OUTPUT
+
+if [ "${#impactedPackages[@]}" == "0" ] ; then
+    info "No changes were detected."
+    exit 1
+fi
+info "Identified ${#impactedPackages[@]} modified packages."
+for impactedPackage in "${!impactedPackages[@]}"; do
+    info " - $impactedPackage"
+done
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> IDENTIFY DEPENDENT PACKAGES
+
+declare -A toEvaluate
+declare -A evaluating
+declare -A recursedPackages
+declare -A filteredPackages
+
+for impactedPackage in "${!impactedPackages[@]}"; do
+    toEvaluate[$impactedPackage]=
+done
+
+for ((ancestorLevel=1 ; ancestorLevel <= $ancestors ; ancestorLevel++ )) ; do
+    info "Evaluating ancestors... (level $ancestorLevel)"
+    for toEvaluatePackage in "${!toEvaluate[@]}"; do
+        evaluating["$toEvaluatePackage"]=
+    done
+    toEvaluate=()
+    for evaluatingPackage in "${!evaluating[@]}" ; do
+        # have to explicitly stop 'ag' from trying to read STDIN
+        dependents=`</dev/null git grep --files-with-matches "$evaluatingPackage" -- '*.go' | xargs dirname | sort | uniq | sed '/^$/d' | sed -e "s~^~$module/~"`
+        recursedPackages[$evaluatingPackage]="true"
+        if [ "$dependents" == "" ] ; then
+            info " - $evaluatingPackage (no dependencies)"
+            continue
+        fi
+        info " - $evaluatingPackage ($(echo "$dependents" | wc -l) dependent packages)"
+        for dependentPackage in $dependents ; do
+            if isPackageFiltered $dependentPackage ; then
+                filteredPackages[$dependentPackage]=
+                recursedPackages[$evaluatingPackage]="true" # skip checking in the future
+                #info "     - $dependentPackage [filtered out]"
+                continue
+            fi
+            info "     - $dependentPackage"
+            impactedPackages[$dependentPackage]=
+            if [[ "${recursedPackages[$dependentPackage]}" != "true" ]]; then
+                toEvaluate[$dependentPackage]=
+            fi
+        done
+    done
+    evaluating=()
+done
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> PRINT OUTPUT
+
+if [ "${#filteredPackages[@]}" != "0" ] ; then
+    info "Filtered out ${#filteredPackages[@]} dependent packages."
+fi
+info "Found ${#impactedPackages[@]} total impacted packages."
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> CLEAN
+
+if [ "$clean" ] ; then
+    info "Cleaning go test cache..."
+    go clean -testcache
+fi
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> JUST BUILD
+
+if [ "$build" ] ; then
+    info "Only building the impacted packages, skipping tests..."
+    info_bar "=" 80
+    # actually, compile the tests, but ignore the built binaries
+    # go build -o /dev/null ${!impactedPackages[@]} $@ # does not validate test files compile
+    # go test -c ${!impactedPackages[@]} -o /dev/null $@ # does not cache test results
+    go test ${!impactedPackages[@]} -run=XXX_SHOULD_NEVER_MATCH_XXX $@
+    exitStatus="$?"
+    info_bar "=" 80
+    if [ "$exitStatus" == "0" ] ; then
+        info "Build was SUCCESSFUL"
+        exit 0
+    else
+        info "Build FAILED!!!"
+        exit 1
+    fi
+fi
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> TEST PACKAGES
+
+exec 5>&1
+set -o pipefail
+info_bar "=" 80
+output=$(go test ${!impactedPackages[@]} $@ | tee /dev/fd/5)
+exitStatus="$?"
+info_bar "=" 80
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> PARSE TEST RESULTS
+
+failures=`echo "$output" | grep -E "^FAIL\s+$module"`
+if [ "$failures" == "" ] ; then
+    if [ "$exitStatus" != "0" ] ; then
+        info "Test execution FAILED due to non-test-result problems!"
+        exit 1
+    fi
+    info "Tests were SUCCESSFUL"
+    exit 0
+fi
+declare -A goRetestPackages
+for failure in "$failures" ; do
+    failedPkg=$(echo "$failure" | sed -E 's/FAIL[[:space:]]+//' | sed -E 's/[[:space:]].*//')
+    goRetestPackages[$failedPkg]=
+done
+info "Tests FAILED!!! To re-run the ${#goRetestPackages[@]} failed package(s), execute:"
+info "go test $(echo "${!goRetestPackages[@]}" | xargs) $@"
+
+exit 1

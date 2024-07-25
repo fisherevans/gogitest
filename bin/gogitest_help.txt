@@ -1,0 +1,34 @@
+gogitest (Go Git Test)
+
+'gogitest' is a tool that identifies which go packages have been modified within
+a Golang project, finds what local packages might depend on those modifications,
+then runs 'go test' on those packages. The goal is to make it easier and quicker
+to test go changes locally in large repositories where it takes a long time to
+run the full suite of tests, and where there might be many dependencies that are
+hard to track down.
+
+The tool uses the current state of 'git' to detect changes.
+
+Usage:
+    gogitest [<gogitest options>] [-- <go test arguments>]
+    gogitest -ignore kafka -base some-parent/branch
+    gogitest -nodeps -build
+    gogitest -local -nodeps -- -args integration
+
+Command Options:
+    -help, -h   Print out this output.
+    -quiet, -q  Turn off informational STDERR logging for nominal behavior.
+
+Change Detection Options:
+    -match, -m <regex-1> <regex-n>...   Only consider packages matching all of the supplied patterns.
+    -ignore, -i <regex-1> <regex-n>...  Do not consider packages matching any of the supplied patterns.
+    -local, -l                 Calculate the diff based on changes that have not been pushed to origin.
+    -base, -b <branch/commit>  Compare the current file state to this target when detecting changes.
+    -ancestors, -a <number>    Set the number of levels of upstream dependencies to detect. [default: 1]
+    -nodeps                    The same as '-ancestors 0'.
+
+Test Options:
+    -build                  Only build the impacted packages and their tests without running them.
+    -clean                  Clean the test cache before running tests.
+    -- <go test arguments>  Stop processing arguments and supply all remaining arguments to 'go test'.
+                            (i.e. 'gogitest -- -args integration')
