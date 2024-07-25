@@ -26,16 +26,16 @@ Check out `gogitest -help` for all available options and arguments. The command 
 
 - **`gogitest`**
   - Detect all changes (staged and unstaged) compared to the merge base of the main development branch.
-  - Find all packages that might depend on the changed (by naively looking for references to the fully qaulified package import name)
-  - Test all discovered packages.
+  - Find all packages that might depend on the changed (by naively looking for references to the fully qualified package import name).
+  - `go test` all discovered packages.
 - **`gogitest -match http -- -args integration`**
-  - Only test packages with `http` within the fully qualified name
-  - Pass in `-args integration` to `go test`
+  - Only test and inspect packages with `http` within the fully qualified name.
+  - Pass in `-args integration` to `go test`.
 - **`gogitest -local`**
-  - When detecting changes, comapre your current filesystem to the `origin` of the current branch.
+  - When detecting changes, compare your current filesystem to the `origin` of the current branch.
 - **`gogitest -nodeps -base some-non/prod-branch`**
-  - Skip package dependency detection, just test the modified packages
-  - Detect the merge base of `some-non/prod-branch` instead of the main development branch
+  - Skip package dependency detection, just test the modified packages.
+  - Detect the merge base of `some-non/prod-branch` instead of the main development branch.
 
 - **`gogitest -build -ignore kafka 'native$'`**
   - Only build the impacted packages and their tests without running them.
