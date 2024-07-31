@@ -44,17 +44,17 @@ if [[ "$GOMOD" == "" ]] ; then
     fatal "Unable to find a valid go.mod!"
 fi
 
-gomod=$(cat "$GOMOD")
-if [[ "$gomod" == "" ]] ; then
+gomodContents=$(cat "$GOMOD")
+if [[ "$gomodContents" == "" ]] ; then
     fatal "Unable to access '$GOMOD'!"
 fi
 
-module=$(echo "$gomod" | grep "^module " | head -n1 | cut -d' ' -f2)
-if [[ "$gomod" == "" ]] ; then
+module=$(echo "$gomodContents" | grep "^module " | head -n1 | cut -d' ' -f2)
+if [[ "$gomodContents" == "" ]] ; then
     fatal "Unable to parse go module from '$GOMOD'!"
 fi
 
-gomoddir=$(dirname gomod)
+gomoddir=$(dirname "$GOMOD")
 if ! cd "$gomoddir" ; then
     fatal "Unable to set working directory to $gomoddir"
 fi
